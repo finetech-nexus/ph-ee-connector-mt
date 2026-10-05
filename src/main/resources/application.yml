@@ -1,0 +1,34 @@
+server:
+  port: 8087
+
+spring:
+  application:
+    name: ph-ee-connector-mt
+
+zeebe:
+  enabled: ${ZEEBE_ENABLED:true}
+  broker:
+    contactpoint: ${ZEEBE_BROKER_CONTACTPOINT:127.0.0.1:26500}
+  client:
+    max-execution-threads: 16
+    evenly-allocated-max-jobs: 64
+    poll-interval: 100
+
+# Monétique Tunisie gateway endpoint (sandbox or production)
+mt:
+  gateway:
+    base-url: ${MT_GATEWAY_BASE_URL:http://localhost:8090}
+    api-key: ${MT_GATEWAY_API_KEY:}
+    merchant-id: ${MT_MERCHANT_ID:NEXUS-MERCHANT}
+  callback-base-url: ${MT_CALLBACK_BASE_URL:http://localhost:8087}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    root: INFO
+    org.mifos.connector.mt: DEBUG
