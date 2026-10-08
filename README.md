@@ -44,7 +44,7 @@ TIDs/MIDs and WORKPOS reconciliation are part of the SMT acquirer model; this co
 
 `mtAuthorizePayment`, `mtCapturePayment`, `mtRefundPayment`, `mtVoidPayment`, `mtGetStatus`, `mtSettleInbound`
 
-## Gateway API (mocked by simulateur-app)
+## Gateway API (mocked by ph-ee-simulator)
 
 - `POST /mt/v1/authorizations`
 - `POST /mt/v1/captures`

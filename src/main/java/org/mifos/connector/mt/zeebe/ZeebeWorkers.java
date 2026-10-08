@@ -65,7 +65,15 @@ public class ZeebeWorkers {
         zeebeClient.newWorker().jobType(type).handler((client, job) -> {
             log.info("Job '{}' process='{}' key={}", job.getType(), job.getBpmnProcessId(), job.getKey());
             Map<String, Object> variables = new HashMap<>(job.getVariablesAsMap());
-            apply(variables, fn.apply(variables));
+            try {
+                apply(variables, fn.apply(variables));
+            } catch (RuntimeException ex) {
+                log.warn("MT job '{}' failed: {}", type, ex.getMessage());
+                variables.put("transactionFailed", true);
+                variables.put("transferSettlementFailed", true);
+                variables.put("transferCode", "05");
+                variables.put("errorMessage", ex.getMessage());
+            }
             client.newCompleteCommand(job.getKey()).variables(variables).send().join();
         }).name(type).maxJobsActive(maxJobs).open();
     }
