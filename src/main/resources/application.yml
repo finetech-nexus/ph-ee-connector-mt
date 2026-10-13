@@ -17,7 +17,7 @@ zeebe:
 # Monétique Tunisie gateway endpoint (sandbox or production)
 mt:
   gateway:
-    base-url: ${MT_GATEWAY_BASE_URL:http://localhost:8090}
+    base-url: ${MT_GATEWAY_BASE_URL:http://localhost:8097}
     api-key: ${MT_GATEWAY_API_KEY:}
     merchant-id: ${MT_MERCHANT_ID:NEXUS-MERCHANT}
   callback-base-url: ${MT_CALLBACK_BASE_URL:http://localhost:8087}
