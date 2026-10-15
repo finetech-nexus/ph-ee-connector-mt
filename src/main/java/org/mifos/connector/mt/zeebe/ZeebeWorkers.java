@@ -7,6 +7,7 @@ import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import org.mifos.connector.mt.client.AccountBalanceClient;
 import org.mifos.connector.mt.client.CardAccountClient;
@@ -97,6 +98,7 @@ public class ZeebeWorkers {
         zeebeClient.newWorker().jobType(type).handler((client, job) -> {
             log.info("Job '{}' process='{}' key={}", job.getType(), job.getBpmnProcessId(), job.getKey());
             Map<String, Object> variables = new HashMap<>(job.getVariablesAsMap());
+            Map<String, Object> before = new HashMap<>(variables);
             try {
                 fn.accept(variables);
             } catch (RuntimeException ex) {
@@ -106,7 +108,7 @@ public class ZeebeWorkers {
                 variables.put("transferCode", "05");
                 variables.put("errorMessage", ex.getMessage());
             }
-            client.newCompleteCommand(job.getKey()).variables(variables).send().join();
+            client.newCompleteCommand(job.getKey()).variables(changedVariables(before, variables)).send().join();
         }).name(type).maxJobsActive(maxJobs).open();
     }
 
@@ -286,6 +288,28 @@ public class ZeebeWorkers {
         }
     }
 
+    /**
+     * Only the values this worker changed are written back. Re-sending the whole job, including
+     * {@code fineractResponseBody}, makes the Zeebe exporter reject the bulk and stalls other processes.
+     */
+    private static Map<String, Object> changedVariables(Map<String, Object> before, Map<String, Object> after) {
+        Map<String, Object> delta = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : after.entrySet()) {
+            String key = entry.getKey();
+            if ("fineractResponseBody".equals(key)) {
+                continue;
+            }
+            Object value = entry.getValue();
+            if (value instanceof Map<?, ?> || value instanceof Iterable<?>) {
+                continue;
+            }
+            if (!before.containsKey(key) || !Objects.equals(before.get(key), value)) {
+                delta.put(key, value);
+            }
+        }
+        return delta;
+    }
+
     private static boolean truth(Object value) {
         return Boolean.TRUE.equals(value) || "true".equalsIgnoreCase(str(value));
     }
@@ -294,6 +318,7 @@ public class ZeebeWorkers {
         zeebeClient.newWorker().jobType(type).handler((client, job) -> {
             log.info("Job '{}' process='{}' key={}", job.getType(), job.getBpmnProcessId(), job.getKey());
             Map<String, Object> variables = new HashMap<>(job.getVariablesAsMap());
+            Map<String, Object> before = new HashMap<>(variables);
             try {
                 apply(variables, fn.apply(variables));
             } catch (RuntimeException ex) {
@@ -303,7 +328,7 @@ public class ZeebeWorkers {
                 variables.put("transferCode", "05");
                 variables.put("errorMessage", ex.getMessage());
             }
-            client.newCompleteCommand(job.getKey()).variables(variables).send().join();
+            client.newCompleteCommand(job.getKey()).variables(changedVariables(before, variables)).send().join();
         }).name(type).maxJobsActive(maxJobs).open();
     }
 
