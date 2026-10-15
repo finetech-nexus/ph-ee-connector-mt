@@ -23,6 +23,11 @@ mt:
   callback-base-url: ${MT_CALLBACK_BASE_URL:http://localhost:8087}
   card-api-base-url: ${CARD_API_BASE_URL:http://localhost:3000}
   notification-api-base-url: ${NOTIFICATION_API_BASE_URL:http://localhost:8096}
+  ams-base-url: ${AMS_BASE_URL:http://ph-ee-connector-ams-mifos:70}
+  core-banking-base-url: ${CORE_BANKING_BASE_URL:http://core-api-core-banking-api.api.svc.cluster.local}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:}
+    payment-confirmation-topic: ${KAFKA_TOPIC_PAYMENT_CONFIRMATION:notification.payment-confirmation}
 
 management:
   endpoints:

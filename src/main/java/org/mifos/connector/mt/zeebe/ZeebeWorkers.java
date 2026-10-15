@@ -8,7 +8,10 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import org.mifos.connector.mt.client.AccountBalanceClient;
 import org.mifos.connector.mt.client.CardAccountClient;
+import org.mifos.connector.mt.client.CardNotificationPublisher;
+import org.mifos.connector.mt.client.CoreBankingClient;
 import org.mifos.connector.mt.client.MtBankClient;
 import org.mifos.connector.mt.model.MtAuthorizationRequest;
 import org.mifos.connector.mt.model.MtCaptureRequest;
@@ -30,16 +33,23 @@ public class ZeebeWorkers {
     private final MtPaymentService service;
     private final CardAccountClient cards;
     private final MtBankClient bank;
+    private final AccountBalanceClient balances;
+    private final CardNotificationPublisher notifications;
+    private final CoreBankingClient coreBanking;
     private final ObjectMapper json;
     @Value("${zeebe.client.evenly-allocated-max-jobs}")
     private int maxJobs;
 
     public ZeebeWorkers(ZeebeClient zeebeClient, MtPaymentService service, CardAccountClient cards, MtBankClient bank,
+            AccountBalanceClient balances, CardNotificationPublisher notifications, CoreBankingClient coreBanking,
             ObjectMapper json) {
         this.zeebeClient = zeebeClient;
         this.service = service;
         this.cards = cards;
         this.bank = bank;
+        this.balances = balances;
+        this.notifications = notifications;
+        this.coreBanking = coreBanking;
         this.json = json;
     }
 
@@ -70,7 +80,13 @@ public class ZeebeWorkers {
         });
         worker("mtSettleInbound", vars -> service.authorize(mapAuth(vars)));
         sideEffect("mtFindAccountByPan", this::findAccount);
+        sideEffect("mtCheckBalance", this::checkBalance);
+        sideEffect("mtApplyUserDecision", this::applyUserDecision);
         sideEffect("mtRequestCardholderConfirmation", this::requestConfirmation);
+        sideEffect("mtNotifyInsufficientBalance", this::notifyInsufficient);
+        sideEffect("mtRecordCancelledDebit", this::recordCancelledDebit);
+        sideEffect("mtClaimBlock", this::claimBlock);
+        sideEffect("mtMarkFundsBlocked", this::markFundsBlocked);
         sideEffect("mtExpireConfirmation", this::expireConfirmation);
         sideEffect("mtCreditCardholder", this::creditCardholder);
         sideEffect("mtReplyToNetwork", this::replyToNetwork);
@@ -96,7 +112,8 @@ public class ZeebeWorkers {
 
     private void findAccount(Map<String, Object> vars) {
         String pan = str(vars.get("pan") != null ? vars.get("pan") : vars.get("panToken"));
-        Map<String, Object> card = cards.findByPan(pan);
+        String entryMode = str(vars.get("entryMode"));
+        Map<String, Object> card = cards.findByPan(pan, entryMode);
         if (card == null || card.get("accountId") == null || String.valueOf(card.get("accountId")).isBlank()) {
             vars.put("partyLookupFailed", true);
             vars.put("transactionFailed", true);
@@ -110,14 +127,88 @@ public class ZeebeWorkers {
         vars.put("partyId", accountId);
         vars.put("partyIdType", "ACCOUNT_ID");
         vars.put("cardId", card.get("cardId"));
+        vars.put("last4", card.get("last4"));
+        vars.put("cardTenantId", card.get("tenantId"));
+        if (card.get("confirmationRequired") != null) {
+            vars.put("confirmationRequired", truth(card.get("confirmationRequired")));
+        }
         rewritePayer(vars, accountId, str(card.get("holderName")));
+    }
+
+    private void checkBalance(Map<String, Object> vars) {
+        BigDecimal amount = toDecimal(vars.get("amount"));
+        BigDecimal available = balances.available(str(vars.get("accountId")), str(vars.get("tenantId")));
+        boolean known = available != null;
+        boolean sufficient = !known || available.compareTo(amount) >= 0;
+        vars.put("balanceUnavailable", !known);
+        vars.put("balanceSufficient", sufficient);
+        vars.put("availableBalance", known ? available.toPlainString() : "");
+    }
+
+    private void applyUserDecision(Map<String, Object> vars) {
+        boolean confirmed = truth(vars.get("userConfirmed"));
+        vars.put("userConfirmed", confirmed);
+        vars.put("cardholderRejected", !confirmed);
+        vars.put("transactionFailed", !confirmed);
+        if (!confirmed) {
+            vars.put("transferCode", "17");
+            vars.put("operationState", "CANCELLED");
+        }
     }
 
     private void requestConfirmation(Map<String, Object> vars) {
         Map<String, Object> body = confirmation(vars);
+        body.put("operationState", "CONFIRMATION_REQUIRED");
         bank.openConfirmation(body);
-        bank.notifyCardholder(body);
+        notifications.publish(body, "CONFIRM");
         vars.put("confirmationRequested", true);
+        vars.put("operationState", "CONFIRMATION_REQUIRED");
+    }
+
+    private void notifyInsufficient(Map<String, Object> vars) {
+        Map<String, Object> body = confirmation(vars);
+        body.put("operationState", "INSUFFICIENT_BALANCE");
+        bank.openConfirmation(body);
+        notifications.publish(body, "INSUFFICIENT_BALANCE");
+        vars.put("transactionFailed", true);
+        vars.put("transferCode", "51");
+        vars.put("operationState", "INSUFFICIENT_BALANCE");
+    }
+
+    private void recordCancelledDebit(Map<String, Object> vars) {
+        try {
+            Map<String, Object> body = confirmation(vars);
+            body.put("reference", vars.getOrDefault("clientReference", vars.get("transactionId")));
+            body.put("cardId", vars.get("cardId"));
+            body.put("last4", vars.get("last4"));
+            String tenant = str(vars.get("cardTenantId"));
+            coreBanking.recordRejectedDebit(body, tenant == null || tenant.isBlank() ? "tn" : tenant);
+            vars.put("cancelledDebitRecorded", true);
+        } catch (RuntimeException ex) {
+            log.warn("Cancelled debit was not written to core banking: {}", ex.getMessage());
+            vars.put("cancelledDebitRecorded", false);
+        }
+    }
+
+    private void claimBlock(Map<String, Object> vars) {
+        Map<String, Object> claim = bank.claimBlock(confirmation(vars));
+        boolean claimed = claim != null && truth(claim.get("claimed"));
+        vars.put("blockClaimed", claimed);
+        if (!claimed) {
+            vars.put("operationState", str(claim == null ? null : claim.get("operationState")));
+        }
+    }
+
+    private void markFundsBlocked(Map<String, Object> vars) {
+        Map<String, Object> body = confirmation(vars);
+        body.put("operationState", "FUNDS_BLOCKED");
+        try {
+            bank.markBlocked(body);
+            notifications.publish(body, "FUNDS_BLOCKED");
+        } catch (RuntimeException ex) {
+            log.warn("Blocked funds were not published: {}", ex.getMessage());
+        }
+        vars.put("operationState", "FUNDS_BLOCKED");
     }
 
     private void expireConfirmation(Map<String, Object> vars) {
@@ -163,6 +254,7 @@ public class ZeebeWorkers {
         body.put("currency", vars.getOrDefault("currency", "TND"));
         body.put("merchant", vars.get("merchantId"));
         body.put("clientId", vars.get("userId"));
+        body.put("availableBalance", vars.get("availableBalance"));
         return body;
     }
 

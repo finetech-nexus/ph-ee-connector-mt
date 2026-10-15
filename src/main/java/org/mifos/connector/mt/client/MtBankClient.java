@@ -28,6 +28,14 @@ public class MtBankClient {
         bank.post().uri("/mt/v1/confirmations/{id}/expire", transactionId).retrieve().toBodilessEntity();
     }
 
+    public Map<String, Object> claimBlock(Map<String, Object> body) {
+        return bank.post().uri("/mt/v1/confirmations/claim").body(body).retrieve().body(new org.springframework.core.ParameterizedTypeReference<>() {});
+    }
+
+    public void markBlocked(Map<String, Object> body) {
+        bank.post().uri("/mt/v1/confirmations/blocked").body(body).retrieve().toBodilessEntity();
+    }
+
     public void reply(Map<String, Object> body) {
         bank.post().uri("/mt/v1/callbacks").body(body).retrieve().toBodilessEntity();
     }

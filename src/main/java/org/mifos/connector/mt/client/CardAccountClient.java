@@ -16,12 +16,13 @@ public class CardAccountClient {
         this.http = builder.baseUrl(trim(baseUrl)).build();
     }
 
-    public Map<String, Object> findByPan(String pan) {
+    public Map<String, Object> findByPan(String pan, String entryMode) {
         if (pan == null || pan.isBlank()) {
             return null;
         }
         try {
-            return http.get().uri("/internal/cards/by-pan?pan={pan}", pan).retrieve()
+            return http.get().uri("/internal/cards/by-pan?pan={pan}&entryMode={entryMode}", pan, entryMode == null ? "" : entryMode)
+                    .retrieve()
                     .body(new ParameterizedTypeReference<>() {});
         } catch (RestClientResponseException ex) {
             if (ex.getStatusCode().value() == 404) {
