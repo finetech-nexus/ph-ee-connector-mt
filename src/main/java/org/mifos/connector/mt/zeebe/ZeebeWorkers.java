@@ -219,9 +219,8 @@ public class ZeebeWorkers {
         body.put("operationState", "FUNDS_BLOCKED");
         try {
             bank.markBlocked(body);
-            notifications.publish(body, "FUNDS_BLOCKED");
         } catch (RuntimeException ex) {
-            log.warn("Blocked funds were not published: {}", ex.getMessage());
+            log.warn("Blocked funds were not recorded: {}", ex.getMessage());
         }
         vars.put("operationState", "FUNDS_BLOCKED");
     }
@@ -252,7 +251,13 @@ public class ZeebeWorkers {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("clientReference", vars.get("clientReference"));
         body.put("outcome", failed ? "REJECTED" : "SETTLED");
-        body.put("reasonCode", failed ? str(vars.getOrDefault("transferCode", "05")) : "ACSC");
+        String transferCode = str(vars.get("transferCode"));
+        boolean holdCode = transferCode != null && transferCode.matches(
+                "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
+        if (holdCode) {
+            body.put("holdTransferCode", transferCode);
+        }
+        body.put("reasonCode", failed ? (holdCode ? "05" : str(vars.getOrDefault("transferCode", "05"))) : "ACSC");
         body.put("networkReference", vars.get("transactionId"));
         bank.reply(body);
         vars.put("networkReplied", true);
