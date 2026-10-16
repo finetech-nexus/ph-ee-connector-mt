@@ -56,6 +56,10 @@ public class ZeebeWorkers {
 
     @PostConstruct
     public void setup() {
+        zeebeClient.newWorker().jobType("mtNewTransferCode").handler((client, job) -> {
+            log.info("Job 'mtNewTransferCode' process='{}' key={}", job.getBpmnProcessId(), job.getKey());
+            client.newCompleteCommand(job.getKey()).variables(Map.of("transferCode", UUID.randomUUID().toString())).send().join();
+        }).name("mtNewTransferCode").maxJobsActive(maxJobs).open();
         worker("mtAuthorizePayment", vars -> service.authorize(mapAuth(vars)));
         worker("mtCapturePayment", vars -> {
             MtCaptureRequest req = new MtCaptureRequest();
