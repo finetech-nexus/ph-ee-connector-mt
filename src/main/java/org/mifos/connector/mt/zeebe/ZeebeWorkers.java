@@ -126,20 +126,32 @@ public class ZeebeWorkers {
         vars.put("partyLookupFailed", false);
         vars.put("accountId", accountId);
         vars.put("userId", card.get("userId"));
-        vars.put("partyId", accountId);
-        vars.put("partyIdType", "ACCOUNT_ID");
+        vars.put("initiator", "PAYER");
+        vars.put("initiatorType", "CONSUMER");
+        vars.put("scenario", "PAYMENT");
+        String tenant = str(firstText(vars.get("tenantId"), card.get("tenantId"), "tn"));
+        Map<String, Object> savings = coreBanking.savings(accountId, tenant);
+        String iban = savings == null ? null : str(savings.get("externalId"));
+        if (iban == null || iban.isBlank()) {
+            vars.put("partyLookupFailed", true);
+            vars.put("transactionFailed", true);
+            vars.put("transferCode", "14");
+            return;
+        }
+        vars.put("partyId", iban);
+        vars.put("partyIdType", "IBAN");
         vars.put("cardId", card.get("cardId"));
         vars.put("last4", card.get("last4"));
         vars.put("cardTenantId", card.get("tenantId"));
         if (card.get("confirmationRequired") != null) {
             vars.put("confirmationRequired", truth(card.get("confirmationRequired")));
         }
-        rewritePayer(vars, accountId, str(card.get("holderName")));
+        rewritePayer(vars, "IBAN", iban, str(card.get("holderName")));
     }
 
     private void checkBalance(Map<String, Object> vars) {
         BigDecimal amount = toDecimal(vars.get("amount"));
-        BigDecimal available = balances.available(str(vars.get("accountId")), str(vars.get("tenantId")));
+        BigDecimal available = balances.available(str(vars.get("partyIdType")), str(vars.get("partyId")), str(vars.get("tenantId")));
         boolean known = available != null;
         boolean sufficient = !known || available.compareTo(amount) >= 0;
         vars.put("balanceUnavailable", !known);
@@ -153,8 +165,9 @@ public class ZeebeWorkers {
         vars.put("cardholderRejected", !confirmed);
         vars.put("transactionFailed", !confirmed);
         if (!confirmed) {
-            vars.put("transferCode", "17");
-            vars.put("operationState", "CANCELLED");
+            boolean expired = truth(vars.get("expired"));
+            vars.put("transferCode", expired ? "68" : "17");
+            vars.put("operationState", expired ? "EXPIRED" : "CANCELLED");
         }
     }
 
@@ -261,7 +274,16 @@ public class ZeebeWorkers {
     }
 
     @SuppressWarnings("unchecked")
-    private void rewritePayer(Map<String, Object> vars, String accountId, String holderName) {
+    private static String firstText(Object... values) {
+        for (Object value : values) {
+            if (value != null && !String.valueOf(value).isBlank()) {
+                return String.valueOf(value);
+            }
+        }
+        return "";
+    }
+
+    private void rewritePayer(Map<String, Object> vars, String partyType, String partyId, String holderName) {
         Object raw = vars.get("channelRequest");
         if (!(raw instanceof String text) || text.isBlank()) {
             return;
@@ -277,8 +299,8 @@ public class ZeebeWorkers {
                 Object info = next.get("partyIdInfo");
                 Map<String, Object> party = info instanceof Map<?, ?> infoMap
                         ? new LinkedHashMap<>((Map<String, Object>) infoMap) : new LinkedHashMap<>();
-                party.put("partyIdType", "ACCOUNT_ID");
-                party.put("partyIdentifier", accountId);
+                party.put("partyIdType", partyType);
+                party.put("partyIdentifier", partyId);
                 next.put("partyIdInfo", party);
                 request.put("payer", next);
             }

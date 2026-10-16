@@ -19,13 +19,14 @@ public class AccountBalanceClient {
         this.http = RestClient.builder().baseUrl(trim(baseUrl)).build();
     }
 
-    public BigDecimal available(String accountId, String tenantId) {
-        if (accountId == null || accountId.isBlank()) {
+    public BigDecimal available(String identifierType, String identifier, String tenantId) {
+        if (identifier == null || identifier.isBlank()) {
             return null;
         }
+        String type = identifierType == null || identifierType.isBlank() ? "ACCOUNT_ID" : identifierType;
         try {
             Map<String, Object> body = http.get()
-                    .uri("/ams/accounts/ACCOUNT_ID/{id}/balance", accountId)
+                    .uri("/ams/accounts/{type}/{id}/balance", type, identifier)
                     .header("Platform-TenantId", tenantId == null || tenantId.isBlank() ? "nexusbank" : tenantId)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {});
@@ -38,7 +39,7 @@ public class AccountBalanceClient {
             }
             return new BigDecimal(raw);
         } catch (RuntimeException ex) {
-            log.warn("Account balance was not available for {}: {}", accountId, ex.getMessage());
+            log.warn("Account balance was not available for {} {}: {}", type, identifier, ex.getMessage());
             return null;
         }
     }
